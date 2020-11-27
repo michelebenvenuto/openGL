@@ -28,6 +28,7 @@ uniform vec4 color;
 out float intensity;
 out vec4 vertexColor;
 out vec2 vertexTexcoords;
+out vec3 lPosition;
 
 void main()
 {
@@ -35,6 +36,7 @@ void main()
     intensity = dot(normal, normalize(light));
     gl_Position = theMatrix * vec4(position.x, position.y, position.z, 1.0f);
     vertexColor = color* intensity;
+    lPosition = position;
 }
 """
 
@@ -62,10 +64,12 @@ rotation_shader = """
 layout (location = 0) out vec4 fragColor;
 
 in float intensity;
+in vec4 vertexColor;
 in vec2 vertexTexcoords;
 
 uniform vec4 color;
 uniform float time;
+uniform vec4 ambient;
 
 uniform sampler2D tex;
 
@@ -73,10 +77,32 @@ void main()
 {
     float angle = time;
     vec3 color1 = vec3(cos(angle), sin(angle + 3.1415) , sin(angle));
-    fragColor =   color * vec4(color1,1) * texture(tex, vertexTexcoords)* intensity;
+    fragColor =  ambient + color * vec4(color1,1) * texture(tex, vertexTexcoords) * vertexColor * intensity;
 }
 """ 
+position_shader = """
+#version 460
 
+layout (location = 0) out vec4 fragColor;
+
+in float intensity;
+in vec4 vertexColor;
+in vec2 vertexTexcoords;
+in vec3 lPosition;
+
+uniform vec4 ambient;
+uniform vec4 color;
+uniform sampler2D tex;
+
+void main()
+{  
+    vec4 color1 = lPosition.x > 0? vec4(1.0,0.0,0.0,1.0): vec4(0.0, 1.0, 0.0, 1.0);
+    vec4 color2 = lPosition.y > 75? vec4(0.0,0.0,1.0,1.0): vec4(1.0, 0.0, 0, 1.0);
+    vec4 color3 = cos(lPosition.z) > 0? vec4(0.0,1.0,0,1.0): vec4(0.0,1.0,1.0,1.0);
+    vec4 finalColor = color1 + color2 + color3;
+    fragColor = ambient + color * finalColor * texture(tex, vertexTexcoords)* vertexColor * intensity;
+}
+"""
 
 shader1 = compileProgram(
     compileShader(vertex_shader, GL_VERTEX_SHADER),
@@ -86,7 +112,11 @@ shader2 = compileProgram(
     compileShader(vertex_shader, GL_VERTEX_SHADER),
     compileShader(rotation_shader, GL_FRAGMENT_SHADER),
 )
-shaders = [shader1, shader2]
+shader3 =compileProgram(
+    compileShader(vertex_shader, GL_VERTEX_SHADER),
+    compileShader(position_shader, GL_FRAGMENT_SHADER),
+)
+shaders = [shader1, shader2, shader3]
 
 scene = pyassimp.load('models/r2-d2.obj')
 
@@ -137,10 +167,10 @@ def glize(node, counter, shader):
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_data.nbytes, index_data, GL_STATIC_DRAW)
 
-        glUniform3f(glGetUniformLocation(shaders[shader % 2], "light"), 0, 0, 500)
-        glUniform4f(glGetUniformLocation(shaders[shader % 2], "color"),0.5, 0.5, 0.5, 1)
-        glUniform4f(glGetUniformLocation(shaders[shader % 2], "ambient"),0, 0, 0, 1)
-        glUniform1f(glGetUniformLocation(shaders[shader % 2], "time"), counter)
+        glUniform3f(glGetUniformLocation(shaders[shader % 3], "light"), 0, 0, 500)
+        glUniform4f(glGetUniformLocation(shaders[shader % 3], "color"),0.75, 0.75, 0.75, 1)
+        glUniform4f(glGetUniformLocation(shaders[shader % 3], "ambient"),0, 0, 0, 1)
+        glUniform1f(glGetUniformLocation(shaders[shader % 3], "time"), counter)
 
         glDrawElements(GL_TRIANGLES, len(index_data), GL_UNSIGNED_INT, None)
 
@@ -151,14 +181,14 @@ def glize(node, counter, shader):
 
 i = glm.mat4()
 
-def createTheMatrix(rotation):
+def createTheMatrix(rotation, Cameraposition):
 
     translate = glm.translate(i, glm.vec3(0, -10, 0))
     rotate = glm.rotate(i,glm.radians(rotation), glm.vec3(0, 1, 0))
     scale = glm.scale(i, glm.vec3(0.5, 0.5, 0.5))
 
     model = translate * rotate * scale
-    view = glm.lookAt(glm.vec3(0, 0, 200), glm.vec3(0, 25, 0), glm.vec3(0, 1, 0))
+    view = glm.lookAt(glm.vec3(0, 0, Cameraposition), glm.vec3(0, 25, 0), glm.vec3(0, 1, 0))
     projection = glm.perspective(glm.radians(45), 800/600, 0.1, 1000)
 
     return projection * view * model
@@ -170,14 +200,15 @@ running = True
 rotation = 0
 time = 0
 counter = 0
+position = 200
 while running:
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glClearColor(0.5, 1.0, 0.5, 1.0)
-    glUseProgram(shaders[counter % 2])
+    glUseProgram(shaders[counter % 3])
 
-    theMatrix = createTheMatrix(rotation)
+    theMatrix = createTheMatrix(rotation, position)
 
-    theMatrixLocation = glGetUniformLocation(shaders[counter % 2], 'theMatrix')
+    theMatrixLocation = glGetUniformLocation(shaders[counter % 3], 'theMatrix')
 
     glUniformMatrix4fv(
         theMatrixLocation, #location
@@ -198,11 +229,16 @@ while running:
                 rotation -= 10
             if event.key == pygame.K_RIGHT:
                 rotation += 10
+            if event.key == pygame.K_UP and position > 30:
+                position -= 10
+            if event.key == pygame.K_DOWN:
+                position += 10
             if event.key == pygame.K_SPACE:
                 counter +=1
             if event.key == pygame.K_w:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
             if event.key == pygame.K_f:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-    time +=0.05
+    print(position)
+    time +=0.05 
     clock.tick(60)

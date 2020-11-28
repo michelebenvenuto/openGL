@@ -50,12 +50,13 @@ in vec4 vertexColor;
 in vec2 vertexTexcoords;
 
 uniform vec4 ambient;
+uniform vec4 color;
 uniform sampler2D tex;
 
 void main()
 {
 
-    fragColor = ambient + texture(tex, vertexTexcoords)* vertexColor * intensity;
+    fragColor = color * texture(tex, vertexTexcoords)* vertexColor * intensity;
 }
 """
 rotation_shader = """
@@ -68,14 +69,14 @@ in vec4 vertexColor;
 in vec2 vertexTexcoords;
 
 uniform vec4 color;
-uniform float time;
+uniform float time1;
 uniform vec4 ambient;
 
 uniform sampler2D tex;
 
 void main()
 {
-    float angle = time;
+    float angle = time1;
     vec3 color1 = vec3(cos(angle), sin(angle + 3.1415) , sin(angle));
     fragColor =  ambient + color * vec4(color1,1) * texture(tex, vertexTexcoords) * vertexColor * intensity;
 }
@@ -103,6 +104,33 @@ void main()
     fragColor = ambient + color * finalColor * texture(tex, vertexTexcoords)* vertexColor * intensity;
 }
 """
+vanish_shader = """
+#version 460
+
+layout (location = 0) out vec4 fragColor;
+
+in float intensity;
+in vec4 vertexColor;
+in vec2 vertexTexcoords;
+in vec3 lPosition;
+
+uniform vec4 color;
+uniform float time2;
+uniform vec4 ambient;
+uniform float rate;
+
+uniform sampler2D tex;
+
+void main()
+{
+    float amplitude = sin(time2)*sin(time2);
+    float final_offset = (sin(lPosition.y * rate) * (amplitude));
+    vec2 texCoord = vec2(vertexTexcoords.x + final_offset, vertexTexcoords.y);
+    vec4 texColor = texture(tex, texCoord);
+    texColor.a = clamp(texColor.a - (amplitude), 0.0, 1.0);
+    fragColor =  texColor;
+}
+"""
 
 shader1 = compileProgram(
     compileShader(vertex_shader, GL_VERTEX_SHADER),
@@ -116,7 +144,11 @@ shader3 =compileProgram(
     compileShader(vertex_shader, GL_VERTEX_SHADER),
     compileShader(position_shader, GL_FRAGMENT_SHADER),
 )
-shaders = [shader1, shader2, shader3]
+shader4 = compileProgram(
+    compileShader(vertex_shader, GL_VERTEX_SHADER),
+    compileShader(vanish_shader, GL_FRAGMENT_SHADER),
+)
+shaders = [shader1, shader2, shader3, shader4]
 
 scene = pyassimp.load('models/r2-d2.obj')
 
@@ -140,7 +172,7 @@ glTexImage2D(
 )
 glGenerateMipmap(GL_TEXTURE_2D)
 
-def glize(node, counter, shader):
+def glize(node, counter1,counter2, shader):
     for mesh in node.meshes:
         vertex_data = numpy.hstack([
             numpy.array(mesh.vertices, dtype=numpy.float32),
@@ -167,17 +199,20 @@ def glize(node, counter, shader):
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_data.nbytes, index_data, GL_STATIC_DRAW)
 
-        glUniform3f(glGetUniformLocation(shaders[shader % 3], "light"), 0, 0, 500)
-        glUniform4f(glGetUniformLocation(shaders[shader % 3], "color"),0.75, 0.75, 0.75, 1)
-        glUniform4f(glGetUniformLocation(shaders[shader % 3], "ambient"),0, 0, 0, 1)
-        glUniform1f(glGetUniformLocation(shaders[shader % 3], "time"), counter)
+        glUniform3f(glGetUniformLocation(shaders[shader % 4], "light"), 0, 0, 500)
+        glUniform4f(glGetUniformLocation(shaders[shader % 4], "color"),0.75, 0.75, 0.75, 1)
+        glUniform4f(glGetUniformLocation(shaders[shader % 4], "ambient"),0, 0, 0, 0)
+        glUniform1f(glGetUniformLocation(shaders[shader % 4], "time1"), counter1)
+        glUniform1f(glGetUniformLocation(shaders[shader % 4], "time2"), counter2)
+        glUniform1f(glGetUniformLocation(shaders[shader % 4], "rate"), 5)
+
 
         glDrawElements(GL_TRIANGLES, len(index_data), GL_UNSIGNED_INT, None)
 
         
 
     for child in node.children:
-        glize(child,counter, shader)
+        glize(child,counter1,counter2, shader)
 
 i = glm.mat4()
 
@@ -198,17 +233,18 @@ glEnable(GL_DEPTH_TEST)
 
 running = True
 rotation = 0
-time = 0
+time1 = 0
+time2 = 0
 counter = 0
 position = 200
 while running:
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glClearColor(0.5, 1.0, 0.5, 1.0)
-    glUseProgram(shaders[counter % 3])
+    glUseProgram(shaders[counter % 4])
 
     theMatrix = createTheMatrix(rotation, position)
 
-    theMatrixLocation = glGetUniformLocation(shaders[counter % 3], 'theMatrix')
+    theMatrixLocation = glGetUniformLocation(shaders[counter % 4], 'theMatrix')
 
     glUniformMatrix4fv(
         theMatrixLocation, #location
@@ -217,7 +253,7 @@ while running:
         glm.value_ptr(theMatrix) #pointer
     )
     
-    glize(scene.rootnode, time,counter)
+    glize(scene.rootnode, time1,time2,counter)
     pygame.display.flip()
 
 
@@ -239,6 +275,12 @@ while running:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
             if event.key == pygame.K_f:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-    print(position)
-    time +=0.05 
+    if counter % 4 ==3:
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    else:
+        glDisable(GL_BLEND)
+        
+    time1 += 0.05
+    time2 +=0.025
     clock.tick(60)
